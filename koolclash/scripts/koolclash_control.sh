@@ -100,7 +100,7 @@ auto_start() {
 
 #--------------------------------------------------------------------------------------
 start_clash_process() {
-    echo_date "启动 Clash 进程"
+    echo_date "启动 Clash 进程..."
     start-stop-daemon -S -q -b -m \
         -p /tmp/run/koolclash.pid \
         -x $KSROOT/bin/clash \
@@ -113,8 +113,6 @@ start_clash_watchdog() {
         start-stop-daemon -S -q -b -m \
             -p /tmp/run/koolclash.pid \
             -x $KSROOT/scripts/koolclash_watchdog.sh
-    else
-        echo_date "不启动 Clash 看门狗进程守护"
     fi
 }
 
@@ -151,7 +149,6 @@ flush_nat() {
 
 #--------------------------------------------------------------------------
 creat_ipset() {
-    echo_date "创建 ipset 名单"
     ipset -! create koolclash_white nethash && ipset flush koolclash_white
     #ipset -! create koolclash_black nethash && ipset flush koolclash_black
 }
@@ -181,33 +178,33 @@ add_white_black_ip() {
 }
 
 #--------------------------------------------------------------------------
-get_mode_name() {
-    case "$1" in
-    0)
-        echo "不通过 Clash"
-        ;;
-    1)
-        echo "通过 Clash"
-        ;;
-    esac
-}
+#get_mode_name() {
+#    case "$1" in
+#    0)
+#        echo "不通过 Clash"
+#        ;;
+#    1)
+#        echo "通过 Clash"
+#        ;;
+#    esac
+#}
 
-get_default_port_name() {
-    case "$1" in
-    80443)
-        echo "80, 443"
-        ;;
-    1)
-        echo "常用 HTTP 协议端口"
-        ;;
-    all)
-        echo "全部端口"
-        ;;
-    0)
-        echo "自定义口"
-        ;;
-    esac
-}
+#get_default_port_name() {
+#    case "$1" in
+#    80443)
+#        echo "80, 443"
+#        ;;
+#    1)
+#        echo "常用 HTTP 协议端口"
+#        ;;
+#    all)
+#        echo "全部端口"
+#        ;;
+#    0)
+#        echo "自定义口"
+#        ;;
+#    esac
+#}
 
 #lan_access_control() {
 #    common_http_port="21 22 80 8080 8880 2052 2082 2086 2095 443 2053 2083 2087 2096 8443"
@@ -286,12 +283,13 @@ get_default_port_name() {
 #--------------------------------------------------------------------------
 apply_nat_rules() {
     #----------------------BASIC RULES---------------------
-    echo_date "写入 iptables 规则"
+
     #-------------------------------------------------------
     # 局域网黑名单（不走ss）/局域网黑名单（走ss）
     # 其余主机默认模式
     # iptables -t nat -A koolclash -j $(get_action_chain $ss_acl_default_mode)
 
+    echo_date "iptables 创建 koolclash 链并添加到 PREROUTING 中"
     iptables -t nat -N koolclash
     iptables -t nat -N koolclash_dns
     iptables -t nat -A PREROUTING -p tcp -j koolclash
@@ -330,6 +328,7 @@ start_koolclash() {
     echo_date ---------------------------------------------------------------------------------
     # stop first
     # restore_dnsmasq_conf
+    restart_dnsmasq
     flush_nat
     restore_start_file
     kill_process
@@ -338,11 +337,12 @@ start_koolclash() {
     auto_start
     start_clash_process
 
-    sleep 2
+    sleep 5
+    echo_date "检查 Clash 进程是否启动成功..."
     if [ ! -n "$(pidof clash)" ]; then
         # 停止 KoolClash
-        echo_date '【Clash 进程没有启动！Clash 配置文件可能存在错误，也有可能是其它原因！】'
-        echo_date '【即将关闭 KoolClash 并还原所有操作】'
+        echo_date '【Clash 进程启动失败！Clash 配置文件可能存在错误，也有可能是其它原因！】'
+        echo_date '【Clash 中断启动并回滚操作！】'
         echo_date ------------------------------- KoolClash 启动中断 -------------------------------
         sleep 2
         # restore_dnsmasq_conf
@@ -352,8 +352,9 @@ start_koolclash() {
         kill_process
         dbus set koolclash_enable=0
         echo_date ------------------------------- KoolClash 停止完毕 -------------------------------
-        echo_date ------------------ 请不要关闭或者刷新页面！倒计时结束时会自动刷新！ ------------------
         exit 1
+    else
+        echo_date "Clash 进程成功启动！"
     fi
 
     load_nat
@@ -361,6 +362,7 @@ start_koolclash() {
     start_clash_watchdog
     dbus set koolclash_enable=1
     echo_date ------------------------------- KoolClash 启动完毕 -------------------------------
+    echo_date KoolClash 启动后可能无法立即上网，请先等待 1-2 分钟！
 }
 
 stop_koolclash() {
@@ -379,22 +381,27 @@ case $1 in
 start)
     if [ "$koolclash_enable" == "1" ]; then
         if [ ! -f $KSROOT/koolclash/config/config.yml ]; then
-            echo_date "没有找到 Clash 的配置文件！自动停止 Clash！"
+            echo_date "【没有找到 Clash 的配置文件！中断启动并回滚操作！】"
             stop_koolclash
+            echo_date "【请重新上传 Clash 配置文件！】"
+            echo "XU6J03M6"
+        elif [ ! -f $KSROOT/koolclash/config/Country.mmdb ]; then
+            echo_date "【没有找到 GeoLite IP 数据库！中断启动并回滚操作！】"
+            stop_koolclash
+            echo_date "【请尝试更新 IP 数据库！】"
             echo "XU6J03M6"
         else
             if [ $(yq r $KSROOT/koolclash/config/config.yml dns.enable) == 'true' ] && [ $(yq r $KSROOT/koolclash/config/config.yml dns.enhanced-mode) == 'fake-ip' ]; then
-                echo_date "KoolClash 执行开机自动启动"
                 start_koolclash
                 echo "XU6J03M6"
             else
-                echo_date "没有找到 DNS 配置或 DNS 配置不合法！自动停止 Clash！"
+                echo_date "【没有找到正确的 DNS 配置或 DNS 配置不合法！中断启动并回滚操作！】"
                 stop_koolclash
                 echo "XU6J03M6"
             fi
         fi
     else
-        echo_date "KoolClash 开机自动关闭"
+        echo_date "【KoolClash 开机自动关闭】"
         stop_koolclash
         echo "XU6J03M6"
     fi
@@ -410,13 +417,16 @@ stop_for_install)
     ;;
 start_after_install)
     if [ ! -f $KSROOT/koolclash/config/config.yml ]; then
-        echo_date "没有找到 Clash 的配置文件，中断启动并回滚操作！"
+        echo_date "【没有找到 Clash 的配置文件！中断启动并回滚操作！】"
+        stop_koolclash
+    elif [ ! -f $KSROOT/koolclash/config/Country.mmdb ]; then
+        echo_date "【没有找到 GeoLite IP 数据库！中断启动并回滚操作！】"
         stop_koolclash
     else
         if [ $(yq r $KSROOT/koolclash/config/config.yml dns.enable) == 'true' ] && [ $(yq r $KSROOT/koolclash/config/config.yml dns.enhanced-mode) == 'fake-ip' ]; then
             start_koolclash
         else
-            echo_date "没有找到 DNS 配置或 DNS 配置不合法，中断启动并回滚操作！"
+            echo_date "【没有找到正确的 DNS 配置或 DNS 配置不合法！中断启动并回滚操作！】"
             stop_koolclash
         fi
     fi
@@ -425,22 +435,27 @@ start_after_install)
     if [ -z "$2" ]; then
         if [ "$koolclash_enable" == "1" ]; then
             if [ ! -f $KSROOT/koolclash/config/config.yml ]; then
-                echo_date "没有找到 Clash 的配置文件！自动停止 Clash！"
+                echo_date "【没有找到 Clash 的配置文件！中断启动并回滚操作！】"
                 stop_koolclash
+                echo_date "【请重新上传 Clash 配置文件！】"
+                echo "XU6J03M6"
+            elif [ ! -f $KSROOT/koolclash/config/Country.mmdb ]; then
+                echo_date "【没有找到 GeoLite IP 数据库！中断启动并回滚操作！】"
+                stop_koolclash
+                echo_date "【请尝试更新 IP 数据库！】"
                 echo "XU6J03M6"
             else
                 if [ $(yq r $KSROOT/koolclash/config/config.yml dns.enable) == 'true' ] && [ $(yq r $KSROOT/koolclash/config/config.yml dns.enhanced-mode) == 'fake-ip' ]; then
-                    echo_date "KoolClash 执行开机自动启动"
                     start_koolclash
                     echo "XU6J03M6"
                 else
-                    echo_date "没有找到 DNS 配置或 DNS 配置不合法！自动停止 Clash！"
+                    echo_date "【没有找到正确的 DNS 配置或 DNS 配置不合法！中断启动并回滚操作！】"
                     stop_koolclash
                     echo "XU6J03M6"
                 fi
             fi
         else
-            echo_date "KoolClash 开机自动关闭"
+            echo_date "【KoolClash 开机自动关闭】"
             stop_koolclash
             echo "XU6J03M6"
         fi
@@ -451,32 +466,44 @@ esac
 # used by httpdb
 case $2 in
 start)
-    touch /tmp/upload/koolclash_log.txt
+    rm -rf /tmp/upload/koolclash_log.txt && touch /tmp/upload/koolclash_log.txt
+    sleep 1
     if [ ! -f $KSROOT/koolclash/config/config.yml ]; then
-        echo_date "【没有找到 Clash 的配置文件！自动停止 Clash！】" >/tmp/upload/koolclash_log.txt
-        http_response 'noconfig'
+        echo_date "【没有找到 Clash 的配置文件！中断启动并回滚操作！】" >/tmp/upload/koolclash_log.txt
         stop_koolclash >>/tmp/upload/koolclash_log.txt
+        echo_date "【请在页面刷新以后重新上传 Clash 配置文件！】" >>/tmp/upload/koolclash_log.txt
         echo_date ------------------ 请不要关闭或者刷新页面！倒计时结束时会自动刷新！ ------------------ >>/tmp/upload/koolclash_log.txt
         echo "XU6J03M6" >>/tmp/upload/koolclash_log.txt
+        http_response 'nofile'
+    elif [ ! -f $KSROOT/koolclash/config/Country.mmdb ]; then
+        echo_date "【没有找到 GeoLite IP 数据库！中断启动并回滚操作！】" >/tmp/upload/koolclash_log.txt
+        stop_koolclash >>/tmp/upload/koolclash_log.txt
+        echo_date "【请在页面刷新以后尝试更新 IP 数据库！】" >>/tmp/upload/koolclash_log.txt
+        echo_date ------------------ 请不要关闭或者刷新页面！倒计时结束时会自动刷新！ ------------------ >>/tmp/upload/koolclash_log.txt
+        echo "XU6J03M6" >>/tmp/upload/koolclash_log.txt
+        http_response 'nofile'
     else
         if [ $(yq r $KSROOT/koolclash/config/config.yml dns.enable) == 'true' ] && [ $(yq r $KSROOT/koolclash/config/config.yml dns.enhanced-mode) == 'fake-ip' ]; then
-            http_response 'success'
             start_koolclash >/tmp/upload/koolclash_log.txt
             echo_date ------------------ 请不要关闭或者刷新页面！倒计时结束时会自动刷新！ ------------------ >>/tmp/upload/koolclash_log.txt
             echo "XU6J03M6" >>/tmp/upload/koolclash_log.txt
+            http_response 'success'
         else
-            echo_date "【没有找到正确的 DNS 配置或 Clash 配置文件存在错误！自动停止 Clash！】" >/tmp/upload/koolclash_log.txt
-            http_response 'nodns'
+            echo_date "【没有找到正确的 DNS 配置或 DNS 配置不合法！中断启动并回滚操作！】" >/tmp/upload/koolclash_log.txt
             stop_koolclash >>/tmp/upload/koolclash_log.txt
+            echo_date "【请在页面刷新以后重新上传 Clash 配置文件！】" >>/tmp/upload/koolclash_log.txt
             echo_date ------------------ 请不要关闭或者刷新页面！倒计时结束时会自动刷新！ ------------------ >>/tmp/upload/koolclash_log.txt
             echo "XU6J03M6" >>/tmp/upload/koolclash_log.txt
+            http_response 'nodns'
         fi
     fi
     ;;
 stop)
-    http_response 'success'
+    rm -rf /tmp/upload/koolclash_log.txt && touch /tmp/upload/koolclash_log.txt
+    sleep 1
     stop_koolclash >/tmp/upload/koolclash_log.txt
     echo_date ------------------ 请不要关闭或者刷新页面！倒计时结束时会自动刷新！ ------------------ >>/tmp/upload/koolclash_log.txt
     echo "XU6J03M6" >>/tmp/upload/koolclash_log.txt
+    http_response 'success'
     ;;
 esac
